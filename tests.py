@@ -5,7 +5,7 @@ from ast import *
 
 class Tests(unittest.TestCase):
     def test1(self):
-        load = Load('resources/table1.tsv', Schema({'A': IntType, 'B': StringType, 'C': IntType, 'D': StringType}))
+        load = Load('resources/table1.tsv', {'A': IntType, 'B': StringType, 'C': IntType, 'D': StringType})
         self.assertEqual(Count(load).compute(), 3)
 
         filtered = Filter(load, Equal(Column('B'), Column('D')))
@@ -17,4 +17,7 @@ class Tests(unittest.TestCase):
         counter2 = Counter(load, Column('C')).compute()
         self.assertEqual(counter2, {1: 1, 4: 1, None: 1})
 
-        # Write(load, 'out.tsv').compute()
+        Write(load, '/tmp/out1.tsv').compute()
+
+        self.assertEqual([x.strip().split() for x in open('resources/table1.tsv', 'r')],
+                         [x.strip().split() for x in open('/tmp/out1.tsv', 'r')])

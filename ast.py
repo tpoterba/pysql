@@ -15,9 +15,15 @@ class BoolType(Type):
 
 
 class Schema(object):
-    def __init__(self, mapping):
-        self.mapping = mapping
+    def __init__(self, fields, mapping):
+        for k in mapping:
+            assert k in fields, 'unmatched column in schema: "%s"' % k
+        for k in fields:
+            assert k in mapping, 'untyped column: "%s"' % k
 
+        self.fields = fields
+        self.mapping = mapping
+        self.types = [mapping[f] for f in fields]
 
 class Expression(object):
     def __init__(self, children):
@@ -114,25 +120,20 @@ class Equal(Expression):
 
 
 class Load(Transformation):
-    def __init__(self, path, schema):
+    def __init__(self, path, mapping):
         self.lines = [line.strip() for line in open(path, 'r')]
-        self.header = self.lines[0].split()
-        self._schema = schema
-        self.types = [schema.mapping[col] for col in self.header]
-        for k in schema.mapping:
-            assert k in self.header, 'unmatched column in schema: "%s"' % k
-        for k in self.header:
-            assert k in schema.mapping, 'untyped column in table: "%s"' % k
+        self._schema = Schema(self.lines[0].strip().split(), mapping)
         super(Load, self).__init__()
 
     def stream(self):
-        cols = range(len(self.header))
+        schema = self.schema()
+        cols = range(len(schema.fields))
         for i in range(1, len(self.lines)):
             values = self.lines[i].strip().split()
             row = {}
             for j in cols:
-                name = self.header[j]
-                t = self.types[j]
+                name = schema.fields[j]
+                t = schema.types[j]
                 value = values[j]
 
                 if value == 'NA':
@@ -267,9 +268,8 @@ class Write(Action):
 
     def compute(self):
         with open(self.path, 'w') as out:
-            m = self.base.schema().mapping
-            ms = [k for k in m]
-            out.write('\t'.join(ms))
+            schema = self.base.schema()
+            out.write('\t'.join(schema.fields))
             out.write('\n')
 
             def process(x):
@@ -279,5 +279,5 @@ class Write(Action):
                     return str(x)
 
             for row in self.base.stream():
-                out.write('\t'.join([process(row[col]) for col in ms]))
+                out.write('\t'.join([process(row[col]) for col in schema.fields]))
                 out.write('\n')
