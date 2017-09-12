@@ -149,6 +149,29 @@ class NotEqual(Expression):
         return Type.Bool
 
 
+class Plus(Expression):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+        super(Plus, self).__init__([left, right])
+
+    def execute(self, row):
+        left_target = self.left.execute(row)
+        right_target = self.right.execute(row)
+        if left_target is None or right_target is None:
+            return None
+        else:
+            return left_target + right_target
+
+    def typecheck(self, schema):
+        if not self.left.type() == Type.Int and self.right.type() == Type.Int:
+            raise RuntimeError('Plus expected "Type.Int" and "Type.Int" args, found "%s" and "%s"' %
+                               (self.left.type(), self.right.type()))
+
+    def type(self):
+        return Type.Int
+
+
 class LessThan(Expression):
     def __init__(self, left, right):
         self.left = left
