@@ -1,17 +1,7 @@
 class Type(object):
-    pass
-
-
-class IntType(Type):
-    pass
-
-
-class StringType(Type):
-    pass
-
-
-class BoolType(Type):
-    pass
+    Int = 'IntType'
+    String = 'StringType'
+    Bool = 'BoolType'
 
 
 class Schema(object):
@@ -20,25 +10,29 @@ class Schema(object):
             assert k in fields, 'unmatched column in schema: "%s"' % k
         for k in fields:
             assert k in mapping, 'untyped column: "%s"' % k
+        assert len(fields) == len(mapping), 'length of fields and mapping is unequal, column names must be unique'
 
         self.fields = fields
         self.mapping = mapping
+
         self.types = [mapping[f] for f in fields]
+
 
 class Expression(object):
     def __init__(self, children):
         self.children = children
 
-    def execute(self, target):
+    def execute(self, row):
         raise NotImplementedError
 
     def typecheck(self, schema):
         raise NotImplementedError
 
-    def propagate_schema(self, schema):
+    def typecheck_all(self, schema):
         for expr in self.children:
-            expr.propagate_schema(schema)
+            expr.typecheck_all(schema)
             expr.typecheck(schema)
+        self.typecheck(schema)
 
     def type(self):
         raise NotImplementedError
@@ -63,20 +57,20 @@ class Action(object):
 class Column(Expression):
     def __init__(self, name):
         self.name = name
-        self.type = None
+        self._type = None
         super(Column, self).__init__([])
 
-    def execute(self, target):
-        return target[self.name]
+    def execute(self, row):
+        return row[self.name]
 
     def typecheck(self, schema):
         if not self.name in schema.mapping:
             raise RuntimeError('name "%s" is not found in schema' % self.name)
-        self.type = schema.mapping[self.name]
+        self._type = schema.mapping[self.name]
 
     def type(self):
-        assert self.type is not None
-        return self.type
+        assert self._type is not None
+        return self._type
 
     def children(self):
         return []
@@ -87,16 +81,19 @@ class Length(Expression):
         self.base = base
         super(Length, self).__init__([base])
 
-    def execute(self, target):
-        target = self.base.execute(target)
+    def execute(self, row):
+        target = self.base.execute(row)
         if target is None:
             return None
         else:
             return len(target)
 
     def typecheck(self, schema):
-        if not self.base.type() == StringType:
-            raise RuntimeError('Length expected StringType, found "%s"' % self.base.type())
+        if not self.base.type() == Type.String:
+            raise RuntimeError('Length expected Type.String, found "%s"' % self.base.type())
+
+    def type(self):
+        return Type.Int
 
 
 class Equal(Expression):
@@ -105,9 +102,9 @@ class Equal(Expression):
         self.right = right
         super(Equal, self).__init__([left, right])
 
-    def execute(self, target):
-        left_target = self.left.execute(target)
-        right_target = self.right.execute(target)
+    def execute(self, row):
+        left_target = self.left.execute(row)
+        right_target = self.right.execute(row)
         if left_target is None or right_target is None:
             return None
         else:
@@ -117,6 +114,55 @@ class Equal(Expression):
         if not self.left.type() == self.right.type():
             raise RuntimeError('Equal expected same-type args, found "%s" and "%s"' %
                                (self.left.type(), self.right.type()))
+
+    def type(self):
+        return Type.Bool
+
+
+class NotEqual(Expression):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+        super(NotEqual, self).__init__([left, right])
+
+    def execute(self, row):
+        left_target = self.left.execute(row)
+        right_target = self.right.execute(row)
+        if left_target is None or right_target is None:
+            return None
+        else:
+            return left_target != right_target
+
+    def typecheck(self, schema):
+        if not self.left.type() == self.right.type():
+            raise RuntimeError('NotEqual expected same-type args, found "%s" and "%s"' %
+                               (self.left.type(), self.right.type()))
+
+    def type(self):
+        return Type.Bool
+
+
+class LessThan(Expression):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+        super(LessThan, self).__init__([left, right])
+
+    def execute(self, row):
+        left_target = self.left.execute(row)
+        right_target = self.right.execute(row)
+        if left_target is None or right_target is None:
+            return None
+        else:
+            return left_target < right_target
+
+    def typecheck(self, schema):
+        if not self.left.type() == Type.Int and self.right.type() == Type.Int:
+            raise RuntimeError('LessThan expected "Type.Int" and "Type.Int" args, found "%s" and "%s"' %
+                               (self.left.type(), self.right.type()))
+
+    def type(self):
+        return Type.Bool
 
 
 class Load(Transformation):
@@ -139,12 +185,12 @@ class Load(Transformation):
                 if value == 'NA':
                     row[name] = None
                 else:
-                    if t == IntType:
+                    if t == Type.Int:
                         row[name] = int(value)
-                    elif t == BoolType:
+                    elif t == Type.Bool:
                         row[name] = bool(value)
                     else:
-                        assert t == StringType
+                        assert t == Type.String
                         row[name] = value
             yield row
 
@@ -158,7 +204,7 @@ class Filter(Transformation):
         assert isinstance(comparison, Expression)
         self.base = base
         self.comparison = comparison
-        comparison.propagate_schema(base.schema())
+        comparison.typecheck_all(base.schema())
         super(Filter, self).__init__()
 
     def stream(self):
@@ -170,6 +216,35 @@ class Filter(Transformation):
 
     def schema(self):
         return self.base.schema()
+
+
+class Select(Transformation):
+    def __init__(self, base, selections):
+        '''The type of selections is list of (str, Expression)'''
+        assert isinstance(base, Transformation)
+        new_fields = []
+        new_mapping = {}
+
+        for name, expr in selections:
+            new_fields.append(name)
+            expr.typecheck_all(base.schema())
+            new_mapping[name] = expr.type()
+
+        self._schema = Schema(new_fields, new_mapping)
+        self.selections = selections
+        self.base = base
+        super(Select, self).__init__()
+
+    def stream(self):
+        for row in self.base.stream():
+            new_row = {}
+            for name, expr in self.selections:
+                new_row[name] = expr.execute(row)
+
+            yield new_row
+
+    def schema(self):
+        return self._schema
 
 
 class Count(Action):
@@ -185,23 +260,12 @@ class Count(Action):
         return elems
 
 
-class Print(Action):
-    def __init__(self, base):
-        assert isinstance(base, Transformation)
-        self.base = base
-        super(Print, self).__init__()
-
-    def compute(self):
-        for element in self.base.stream():
-            print(element)
-
-
 class Sum(Action):
     def __init__(self, base, expr):
         assert isinstance(base, Transformation)
         assert isinstance(expr, Expression)
-        expr.propagate_schema(base.schema())
-        assert isinstance(expr.type(), IntType), 'Sum requires IntType, found "%s"' % expr.type()
+        expr.typecheck_all(base.schema())
+        assert expr.type() == Type.Int, 'Sum requires Type.Int, found "%s"' % expr.type()
         self.base = base
         self.expr = expr
         super(Sum, self).__init__()
@@ -219,8 +283,8 @@ class Mean(Action):
     def __init__(self, base, expr):
         assert isinstance(base, Transformation)
         assert isinstance(expr, Expression)
-        expr.propagate_schema(base.schema())
-        assert isinstance(expr.type(), IntType), 'Mean requires IntType, found "%s"' % expr.type()
+        expr.typecheck_all(base.schema())
+        assert expr.type() == Type.Int, 'Mean requires Type.Int, found "%s"' % expr.type()
         self.base = base
         self.expr = expr
         super(Mean, self).__init__()
@@ -243,7 +307,7 @@ class Counter(Action):
     def __init__(self, base, expr):
         assert isinstance(base, Transformation)
         assert isinstance(expr, Expression)
-        expr.propagate_schema(base.schema())
+        expr.typecheck_all(base.schema())
         self.base = base
         self.expr = expr
         super(Counter, self).__init__()
@@ -267,17 +331,37 @@ class Write(Action):
         super(Write, self).__init__()
 
     def compute(self):
-        with open(self.path, 'w') as out:
-            schema = self.base.schema()
-            out.write('\t'.join(schema.fields))
+        if self.path == 'stdout':
+            import sys
+            out = sys.stdout
+        else:
+            out = open(self.path, 'w')
+        schema = self.base.schema()
+        out.write('\t'.join(schema.fields))
+        out.write('\n')
+
+        def process(x):
+            if x is None:
+                return 'NA'
+            else:
+                return str(x)
+
+        for row in self.base.stream():
+            out.write('\t'.join([process(row[col]) for col in schema.fields]))
             out.write('\n')
 
-            def process(x):
-                if x is None:
-                    return 'NA'
-                else:
-                    return str(x)
+        if self.path != 'stdout':
+            out.close()
 
-            for row in self.base.stream():
-                out.write('\t'.join([process(row[col]) for col in schema.fields]))
-                out.write('\n')
+
+class Collect(Action):
+    def __init__(self, base):
+        assert isinstance(base, Transformation)
+        self.base = base
+        super(Collect, self).__init__()
+
+    def compute(self):
+        rows = []
+        for row in self.base.stream():
+            rows.append(row)
+        return rows

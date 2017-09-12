@@ -5,7 +5,7 @@ from ast import *
 
 class Tests(unittest.TestCase):
     def test1(self):
-        load = Load('resources/table1.tsv', {'A': IntType, 'B': StringType, 'C': IntType, 'D': StringType})
+        load = Load('resources/table1.tsv', {'A': Type.Int, 'B': Type.String, 'C': Type.Int, 'D': Type.String})
         self.assertEqual(Count(load).compute(), 3)
 
         filtered = Filter(load, Equal(Column('B'), Column('D')))
@@ -21,3 +21,11 @@ class Tests(unittest.TestCase):
 
         self.assertEqual([x.strip().split() for x in open('resources/table1.tsv', 'r')],
                          [x.strip().split() for x in open('/tmp/out1.tsv', 'r')])
+
+    def test_select(self):
+        load = Load('resources/table1.tsv', {'A': Type.Int, 'B': Type.String, 'C': Type.Int, 'D': Type.String})
+
+        s = Select(load, [('Foo', Column('A')), ('Bar', LessThan(Column('C'), Column('A')))])
+        rows = Collect(s).compute()
+
+        self.assertEqual(rows, [{'Foo': 1, 'Bar': None}, {'Foo': 2, 'Bar': False}, {'Foo': 2, 'Bar': True}])
