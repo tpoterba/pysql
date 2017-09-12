@@ -37,9 +37,6 @@ class Expression(object):
     def type(self):
         raise NotImplementedError
 
-    def children(self):
-        raise NotImplementedError
-
 
 class Transformation(object):
     def __init__(self):
