@@ -1,4 +1,8 @@
 class Type(object):
+    """The identities of the below don't matter, as long as they
+    are unique (this is a crappy Python 2 enumeration). I chose
+    strings so we can have informative error messages."""
+
     Int = 'IntType'
     String = 'StringType'
     Bool = 'BoolType'
@@ -52,6 +56,9 @@ class Transformation(object):
 class Action(object):
     def __init__(self):
         pass
+
+    def execute(self):
+        raise NotImplementedError
 
 
 class Column(Expression):
@@ -253,7 +260,7 @@ class Count(Action):
         self.base = base
         super(Count, self).__init__()
 
-    def compute(self):
+    def execute(self):
         elems = 0
         for row in self.base.stream():
             elems += 1
@@ -270,7 +277,7 @@ class Sum(Action):
         self.expr = expr
         super(Sum, self).__init__()
 
-    def compute(self):
+    def execute(self):
         x = 0
         for row in self.base.stream():
             element = self.expr.execute(row)
@@ -289,7 +296,7 @@ class Mean(Action):
         self.expr = expr
         super(Mean, self).__init__()
 
-    def compute(self):
+    def execute(self):
         x = 0
         n = 0
         for row in self.base.stream():
@@ -312,7 +319,7 @@ class Counter(Action):
         self.expr = expr
         super(Counter, self).__init__()
 
-    def compute(self):
+    def execute(self):
         d = {}
         for row in self.base.stream():
             element = self.expr.execute(row)
@@ -330,7 +337,7 @@ class Write(Action):
         self.path = path
         super(Write, self).__init__()
 
-    def compute(self):
+    def execute(self):
         if self.path == 'stdout':
             import sys
             out = sys.stdout
@@ -360,7 +367,7 @@ class Collect(Action):
         self.base = base
         super(Collect, self).__init__()
 
-    def compute(self):
+    def execute(self):
         rows = []
         for row in self.base.stream():
             rows.append(row)
