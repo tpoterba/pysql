@@ -164,11 +164,11 @@ class Filter(Transformation):
         super(Filter, self).__init__()
 
     def stream(self):
-        for element in self.base.stream():
-            pred = self.comparison.execute(element)
+        for row in self.base.stream():
+            pred = self.comparison.execute(row)
             # Missing treated as False
             if pred:
-                yield element
+                yield row
 
     def schema(self):
         return self.base.schema()
@@ -182,7 +182,7 @@ class Count(Action):
 
     def compute(self):
         elems = 0
-        for element in self.base.stream():
+        for row in self.base.stream():
             elems += 1
         return elems
 
@@ -196,3 +196,91 @@ class Print(Action):
     def compute(self):
         for element in self.base.stream():
             print(element)
+
+
+class Sum(Action):
+    def __init__(self, base, expr):
+        assert isinstance(base, Transformation)
+        assert isinstance(expr, Expression)
+        expr.propagate_schema(base.schema())
+        assert isinstance(expr.type(), IntType), 'Sum requires IntType, found "%s"' % expr.type()
+        self.base = base
+        self.expr = expr
+        super(Sum, self).__init__()
+
+    def compute(self):
+        x = 0
+        for row in self.base.stream():
+            element = self.expr.execute(row)
+            if element:
+                x += element
+        return x
+
+
+class Mean(Action):
+    def __init__(self, base, expr):
+        assert isinstance(base, Transformation)
+        assert isinstance(expr, Expression)
+        expr.propagate_schema(base.schema())
+        assert isinstance(expr.type(), IntType), 'Mean requires IntType, found "%s"' % expr.type()
+        self.base = base
+        self.expr = expr
+        super(Mean, self).__init__()
+
+    def compute(self):
+        x = 0
+        n = 0
+        for row in self.base.stream():
+            element = self.expr.execute(row)
+            if element:
+                x += element
+                n += 1
+        if n > 0:
+            return float(x) / n
+        else:
+            return float('nan')
+
+
+class Counter(Action):
+    def __init__(self, base, expr):
+        assert isinstance(base, Transformation)
+        assert isinstance(expr, Expression)
+        expr.propagate_schema(base.schema())
+        self.base = base
+        self.expr = expr
+        super(Counter, self).__init__()
+
+    def compute(self):
+        d = {}
+        for row in self.base.stream():
+            element = self.expr.execute(row)
+            if element in d:
+                d[element] += 1
+            else:
+                d[element] = 1
+        return d
+
+
+class Write(Action):
+    def __init__(self, base, path):
+        assert isinstance(base, Transformation)
+        self.base = base
+        self.path = path
+        super(Write, self).__init__()
+
+    def compute(self):
+        with open(self.path, 'w') as out:
+            m = self.base.schema().mapping
+            ms = [k for k in m]
+            out.write('\t'.join(ms))
+            out.write('\n')
+
+            def process(x):
+                if x is None:
+                    return 'NA'
+                else:
+                    return str(x)
+
+            for row in self.base.stream():
+                out.write('\t'.join([process(row[col]) for col in ms]))
+                out.write('\n')
